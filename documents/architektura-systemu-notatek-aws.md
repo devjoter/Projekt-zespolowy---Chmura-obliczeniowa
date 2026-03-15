@@ -1,4 +1,4 @@
-<!-- Zmiany: utworzenie pliku z planem architektury systemu notatek, data: 2026-03-15 -->
+<!-- Zmiany: aktualizacja architektury na wariant serverless (API Gateway + Lambda zamiast App Runner), data: 2026-03-15 -->
 
 ---
 name: architektura-systemu-notatek-aws
@@ -21,7 +21,7 @@ Celem jest przygotowanie pełnego, ale realistycznego (pod kątem czasu i złoż
 - **Dodatkowe funkcje**: świadomie **odpuszczone** na ten etap (tagi, przypomnienia, współdzielenie itd.).
 - **Stack chmurowy**: prosty, minimalny, ale poprawny:
   - Frontend: React hostowany w AWS Amplify Hosting.
-  - Backend: Node.js (REST API) hostowany w AWS App Runner (lub alternatywnie ECS/Fargate – w planie przyjmiemy App Runner jako prostszy).
+  - Backend: Node.js (REST API) w modelu serverless na AWS Lambda wywoływana przez Amazon API Gateway (bardziej Free Tier–friendly niż App Runner).
   - Autoryzacja: AWS Cognito (User Pool).
   - Baza danych: DynamoDB.
   - Monitorowanie/logi: CloudWatch (podstawowe).
@@ -34,10 +34,10 @@ Celem jest przygotowanie pełnego, ale realistycznego (pod kątem czasu i złoż
     - `NotesModule` (lista notatek, formularz dodawania/edycji, filtrowanie po priorytecie).
     - `UI/Layout` (nawigacja, komponenty wspólne).
   - Komunikacja z backendem przez REST API (HTTPS) z nagłówkiem `Authorization: Bearer <JWT>`.
-- **Warstwa logiki (backend Node.js)** – aplikacja REST:
+- **Warstwa logiki (backend Node.js)** – funkcje serverless (AWS Lambda) za API Gateway:
   - Moduły:
-    - `AuthMiddleware` – walidacja tokenu JWT z Cognito (biblioteka AWS SDK / jwks-rsa).
-    - `NotesController` – obsługa endpointów REST (CRUD notatek, lista notatek).
+    - `AuthMiddleware` – walidacja tokenu JWT z Cognito (może być częściowo realizowana przez API Gateway Authorizer, a częściowo w kodzie funkcji).
+    - `NotesController` – obsługa operacji CRUD notatek i listowania, zaimplementowana jako zestaw funkcji Lambda (np. `getNotes`, `createNote`, `updateNote`, `deleteNote`) lub jedna funkcja rozpoznająca metodę/ścieżkę.
     - `NotesService` – logika biznesowa (mapowanie danych z/do DynamoDB, walidacja wejścia, reguły dot. priorytetu).
     - `NotesRepository` – operacje na DynamoDB (SDK v3).
     - `ErrorHandling/Logging` – mapowanie wyjątków na kody HTTP, logowanie do stdout (zbierane przez CloudWatch).
@@ -53,10 +53,11 @@ Celem jest przygotowanie pełnego, ale realistycznego (pod kątem czasu i złoż
   - Możliwe indeksy pomocnicze (opcjonalne, opisane w planie, ale niekonieczne w MVP).
 - **Warstwa chmurowa i bezpieczeństwa (AWS)**:
   - **AWS Cognito User Pool** – zarządzanie użytkownikami, rejestracja/logowanie, odzyskiwanie hasła.
-  - **AWS App Runner** – hostowanie kontenerowego backendu z autoskalowaniem, połączonego z DynamoDB.
+  - **Amazon API Gateway** – publiczne REST API, mapujące metody HTTP na funkcje Lambda oraz integrujące się z Cognito (JWT Authorizer).
+  - **AWS Lambda** – wykonywanie logiki backendowej w modelu serverless (funkcje obsługujące operacje na notatkach).
   - **AWS DynamoDB** – trwałe przechowywanie notatek.
   - **AWS Amplify Hosting** – hosting frontendu React (build & deploy z repozytorium).
-  - **AWS CloudWatch** – logi aplikacji backendu, podstawowe metryki.
+  - **AWS CloudWatch** – logi funkcji Lambda i API Gateway, podstawowe metryki.
   - Sieć: komunikacja po HTTPS; proste założenie: brak skomplikowanej sieci VPC w opisie, żeby nie komplikować raportu – w razie potrzeby można dodać jako „dalszy rozwój”.
 
 ### Model danych (koncepcja)
@@ -89,32 +90,34 @@ Celem jest przygotowanie pełnego, ale realistycznego (pod kątem czasu i złoż
     - `Usuń notatkę`.
     - `Oznacz priorytet notatki` (może być jako część tworzenia/edycji lub osobny use case).
   - Relacje: `include` dla wspólnych kroków (np. „Uwierzytelnij użytkownika” używany przez inne przypadki).
-2. **Diagram architektury systemu (Component/Deployment)**
+2. **Diagram architektury systemu (Component/Deployment) – wariant serverless**
   - Styl: prosty diagram komponentów + rozłożenie na usługi AWS.
   - Elementy:
     - `UserBrowser` – przeglądarka użytkownika.
     - `ReactFrontend` hostowany w `AWS Amplify`.
-    - `BackendService` (Node.js REST API) hostowany w `AWS App Runner`.
+    - `APIGateway` – warstwa REST API.
+    - `NotesLambda` (lub kilka funkcji Lambda, np. `GetNotesLambda`, `CreateNoteLambda` itd.).
     - `CognitoUserPool`.
     - `DynamoDBTable`.
     - `CloudWatch`.
   - Przepływy:
     - `UserBrowser` → `ReactFrontend` (HTTPS, statyczne pliki).
     - `ReactFrontend` → `CognitoUserPool` (rejestracja/logowanie, pozyskanie tokenu).
-    - `ReactFrontend` → `BackendService` (REST API z JWT).
-    - `BackendService` → `DynamoDBTable` (operacje CRUD).
-    - `BackendService` → `CloudWatch` (logi).
+    - `ReactFrontend` → `APIGateway` (REST API z JWT w nagłówku Authorization).
+    - `APIGateway` → `NotesLambda` (wywołanie odpowiedniej funkcji).
+    - `NotesLambda` → `DynamoDBTable` (operacje CRUD).
+    - `NotesLambda` → `CloudWatch` (logi).
 3. **Diagram modelu danych (ERD / prosty model logiczny)**
   - Encje `User` i `Note`.
   - Atrybuty jak wyżej.
   - Relacja 1..N.
   - Dodatkowo można zaznaczyć, że dane użytkownika są faktycznie przechowywane w Cognito, a w tabeli `Notes` klucz `userId` pochodzi z Cognito.
-4. **Diagram przepływu (Sequence / Flow) dla kluczowych scenariuszy**
+4. **Diagram przepływu (Sequence / Flow) dla kluczowych scenariuszy – wariant serverless**
   - Co najmniej 2 sekwencje:
   1. **Logowanie użytkownika i uzyskanie dostępu do notatek**:
-    - `User` → `ReactFrontend` → `CognitoUserPool` → z powrotem do frontendu z tokenem → `ReactFrontend` → `BackendService` (GET `/api/notes`) → `DynamoDB`.
+    - `User` → `ReactFrontend` → `CognitoUserPool` → z powrotem do frontendu z tokenem → `ReactFrontend` → `APIGateway` (GET `/notes`) → `NotesLambda` → `DynamoDB`.
   2. **Dodanie/edycja notatki z priorytetem**:
-    - `User` → `ReactFrontend` (formularz notatki) → `BackendService` (POST/PUT) → `DynamoDB` → odpowiedź sukces → odświeżenie listy notatek.
+    - `User` → `ReactFrontend` (formularz notatki) → `APIGateway` (POST/PUT `/notes` lub `/notes/{id}`) → `NotesLambda` → `DynamoDB` → odpowiedź sukces → odświeżenie listy notatek.
 
 ### Propozycja diagramu architektury w mermaid (do wklejenia w narzędzie wspierające mermaid)
 
@@ -123,7 +126,8 @@ flowchart LR
   userBrowser["PrzeglądarkaUżytkownika"]
   reactApp["ReactFrontend"]
   amplifyHosting["AWSAmplifyHosting"]
-  appRunner["AWSAppRunnerBackend"]
+  apiGw["AmazonAPIGateway"]
+  notesLambda["AWSLambdaNotes"]
   cognito["AWSCognitoUserPool"]
   dynamo["AWSDynamoDBNotes"]
   cloudwatch["AWSCloudWatch"]
@@ -131,9 +135,10 @@ flowchart LR
   userBrowser -->|"HTTPS (SPA)"| reactApp
   reactApp -->|"Hostowany w"| amplifyHosting
   reactApp -->|"Rejestracja/Logowanie"| cognito
-  reactApp -->|"REST API + JWT"| appRunner
-  appRunner -->|"CRUD notatek"| dynamo
-  appRunner -->|"Logi"| cloudwatch
+  reactApp -->|"REST API + JWT"| apiGw
+  apiGw -->|"Wywołanie funkcji"| notesLambda
+  notesLambda -->|"CRUD notatek"| dynamo
+  notesLambda -->|"Logi"| cloudwatch
 ```
 
 ### Propozycja diagramu sekwencji (logowanie i pobranie notatek)
@@ -144,7 +149,8 @@ sequenceDiagram
   participant Browser
   participant ReactApp
   participant Cognito
-  participant Backend
+  participant APIGateway
+  participant NotesLambda
   participant DynamoDB
 
   User->>Browser: Otwiera aplikację
@@ -153,12 +159,11 @@ sequenceDiagram
   ReactApp->>Cognito: Żądanie logowania (email, hasło)
   Cognito-->>ReactApp: Token JWT
   ReactApp-->>Browser: Zapis tokenu (pamięć aplikacji)
-  Browser->>Backend: GET /api/notes (Authorization: Bearer JWT)
-  Backend->>Cognito: Walidacja tokenu (jwks)
-  Cognito-->>Backend: Potwierdzenie poprawności
-  Backend->>DynamoDB: Zapytanie o notatki userId
-  DynamoDB-->>Backend: Lista notatek
-  Backend-->>Browser: 200 OK + dane notatek
+  Browser->>APIGateway: GET /notes (Authorization: Bearer JWT)
+  APIGateway->>NotesLambda: Wywołanie funkcji (zweryfikowany JWT)
+  NotesLambda->>DynamoDB: Zapytanie o notatki userId
+  DynamoDB-->>NotesLambda: Lista notatek
+  NotesLambda-->>Browser: 200 OK + dane notatek
   Browser-->>User: Wyświetlenie listy notatek
 ```
 
@@ -170,9 +175,9 @@ sequenceDiagram
 
 ### Zakres dokumentacji opisowej (do raportu)
 
-- **Opis architektury** (na bazie powyższego planu):
+- **Opis architektury** (na bazie powyższego planu, wariant serverless):
   - Krótki opis roli każdej usługi AWS.
-  - Uzasadnienie wyboru App Runner vs inne usługi (prostota wdrożenia, automatyczne skalowanie, mniejsza ilość konfiguracji).
+  - Uzasadnienie wyboru Lambda + API Gateway vs usługi kontenerowe (np. App Runner): korzystniejsze warunki Free Tier, brak konieczności zarządzania instancjami, automatyczne skalowanie na żądanie.
   - Uzasadnienie wyboru DynamoDB (prosty, kluczowy model danych, niski narzut operacyjny, dobrze pasuje do wzorca userId + noteId).
 - **Opis bezpieczeństwa**:
   - Użycie Cognito jako głównego źródła tożsamości.
