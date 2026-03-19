@@ -1,0 +1,18 @@
+.form {
+  margin-bottom: 20px;
+  gap: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.prioritySection {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.prioritySelect {
+  width: 120px;
+}

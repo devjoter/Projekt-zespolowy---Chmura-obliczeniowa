@@ -1,0 +1,33 @@
+.container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+.card {
+  width: 350px;
+  padding: 24px;
+  border-radius: 12px;
+}
+
+.title {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.inputMargin {
+  margin-bottom: 16px;
+}
+
+.passwordMargin {
+  margin-bottom: 16px;
+}
+
+.repeatMargin {
+  margin-bottom: 24px;
+}
+
+.buttonMargin {
+  margin-bottom: 8px;
+}

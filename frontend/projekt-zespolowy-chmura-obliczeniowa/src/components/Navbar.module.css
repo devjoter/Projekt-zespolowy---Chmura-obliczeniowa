@@ -1,0 +1,19 @@
+.navbar {
+  padding-bottom: 16px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 2px solid;
+}
+
+.title {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.rightSection {
+  display: flex;
+  flex-direction: row;
+  gap: 32px;
+}
